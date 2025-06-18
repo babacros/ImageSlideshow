@@ -28,7 +28,7 @@ public protocol ImageSlideshowDelegate: class {
     @objc optional func imageSlideshowDidEndDecelerating(_ imageSlideshow: ImageSlideshow)
 }
 
-/** 
+/**
     Used to represent position of the Page Control
     - hidden: Page Control is hidden
     - insideScrollView: Page Control is inside image slideshow
@@ -49,6 +49,98 @@ public enum PageControlPosition {
 public enum ImagePreload {
     case fixed(offset: Int)
     case all
+}
+
+/// Configuration struct for carousel slideshow type
+///
+/// Used to define the appearance and spacing of carousel-style slideshows where
+/// multiple images are partially visible at once.
+public struct CarouselConfig {
+    /// The width multiplier for each carousel item relative to the scroll view width
+    /// - Example: 0.8 means each item will be 80% of the scroll view width
+    let itemWidthMultiplier: CGFloat
+
+    /// The horizontal content inset (padding) on the left and right sides of the carousel
+    /// - Note: This creates equal spacing on both ends of the carousel
+    let horizontalContentInset: CGFloat
+
+    /// The spacing between adjacent carousel items
+    let spacing: CGFloat
+
+    /// The corner radius applied to each carousel item
+    let cornerRadius: CGFloat
+
+    /// Initializes a new CarouselConfig
+    /// - Parameters:
+    ///   - itemWidthMultiplier: Width multiplier for each item (0.0 to 1.0)
+    ///   - horizontalContentInset: Left and right padding for the carousel
+    ///   - spacing: Space between adjacent items
+    ///   - cornerRadius: Corner radius for carousel items
+    public init(
+        itemWidthMultiplier: CGFloat,
+        horizontalContentInset: CGFloat,
+        spacing: CGFloat,
+        cornerRadius: CGFloat
+    ) {
+        self.itemWidthMultiplier = itemWidthMultiplier
+        self.horizontalContentInset = horizontalContentInset
+        self.spacing = spacing
+        self.cornerRadius = cornerRadius
+    }
+}
+
+/// Defines the visual presentation style of the slideshow
+public enum SlideshowType {
+    /// Full-width slideshow where each image takes the entire width
+    /// - Features: Pagination enabled, single image visible at a time
+    case fullWidth
+
+    /// Carousel-style slideshow with custom configuration
+    /// - Features: Multiple images partially visible, custom spacing and sizing
+    /// - Parameter config: Configuration object defining carousel appearance
+    case carousel(config: CarouselConfig)
+
+    /// Determines whether pagination should be enabled for this slideshow type
+    /// - Returns: `true` for fullWidth, `false` for carousel
+    var hasPagination: Bool {
+        switch self {
+        case .fullWidth:
+            return true
+        case .carousel:
+            return false
+        }
+    }
+
+    /// Returns the spacing between carousel items
+    /// - Returns: Spacing value for carousel type, 0 for fullWidth
+    var carouselSpacing: CGFloat {
+        switch self {
+        case .fullWidth:
+            0
+        case .carousel(let config):
+            config.spacing
+        }
+    }
+
+    /// Returns the horizontal content inset for carousel items
+    /// - Returns: Content inset value for carousel type, 0 for fullWidth
+    var carouselContentInset: CGFloat {
+        switch self {
+        case .fullWidth:
+            0
+        case .carousel(config: let config):
+            config.horizontalContentInset
+        }
+    }
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .fullWidth:
+            0
+        case .carousel(let config):
+            config.cornerRadius
+        }
+    }
 }
 
 /// Main view containing the Image Slideshow
@@ -218,9 +310,16 @@ open class ImageSlideshow: UIView {
         return scrollView.frame.size.width > 0 ? Int(scrollView.contentOffset.x + scrollView.frame.size.width / 2) / Int(scrollView.frame.size.width) : 0
     }
 
+    private let type: SlideshowType
+
     // MARK: - Life cycle
 
-    override public init(frame: CGRect) {
+    /// Initializes a new ImageSlideshow with specified frame and type
+    /// - Parameters:
+    ///   - frame: The frame rectangle for the slideshow view
+    ///   - type: The slideshow presentation type (default: .fullWidth)
+    public init(frame: CGRect, type: SlideshowType = .fullWidth) {
+        self.type = type
         super.init(frame: frame)
         initialize()
     }
@@ -230,6 +329,7 @@ open class ImageSlideshow: UIView {
     }
 
     required public init?(coder aDecoder: NSCoder) {
+        type = .fullWidth
         super.init(coder: aDecoder)
         initialize()
     }
@@ -244,7 +344,7 @@ open class ImageSlideshow: UIView {
         // scroll view configuration
         scrollView.frame = CGRect(x: 0, y: 0, width: frame.size.width, height: frame.size.height - 50.0)
         scrollView.delegate = self
-        scrollView.isPagingEnabled = true
+        scrollView.isPagingEnabled = type.hasPagination
         scrollView.bounces = true
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
@@ -275,15 +375,13 @@ open class ImageSlideshow: UIView {
         super.layoutSubviews()
 
         // fixes the case when automaticallyAdjustsScrollViewInsets on parenting view controller is set to true
-        scrollView.contentInset = UIEdgeInsets.zero
-
         layoutPageControl()
         layoutScrollView()
     }
 
     open func layoutPageControl() {
         if let pageIndicatorView = pageIndicator?.view {
-            pageIndicatorView.isHidden = images.count < 2
+            pageIndicatorView.isHidden = images.count < 2 || type.hasPagination == false
 
             var edgeInsets: UIEdgeInsets = UIEdgeInsets.zero
             if #available(iOS 11.0, *) {
@@ -295,19 +393,38 @@ open class ImageSlideshow: UIView {
         }
     }
 
+    var imageWidth: CGFloat {
+        switch type {
+        case .fullWidth:
+            scrollView.frame.size.width
+        case .carousel(let config):
+            scrollView.frame.size.width * config.itemWidthMultiplier
+        }
+    }
+
     /// updates frame of the scroll view and its inner items
     func layoutScrollView() {
         let pageIndicatorViewSize = pageIndicator?.view.frame.size
         let scrollViewBottomPadding = pageIndicatorViewSize.flatMap { pageIndicatorPosition.underPadding(for: $0) } ?? 0
 
         scrollView.frame = CGRect(x: 0, y: 0, width: frame.size.width, height: frame.size.height - scrollViewBottomPadding)
-        scrollView.contentSize = CGSize(width: scrollView.frame.size.width * CGFloat(scrollViewImages.count), height: scrollView.frame.size.height)
+        scrollView.contentSize = CGSize(
+            // Calculate total width: (item width * items count) + (spacing between items * gaps) + (left + right content insets)
+            width: (imageWidth * CGFloat(scrollViewImages.count)) + (type.carouselSpacing * CGFloat(scrollViewImages.count - 1)) + 2 * type.carouselContentInset,
+            height: scrollView.frame.size.height
+        )
 
         for (index, view) in slideshowItems.enumerated() {
             if !view.zoomInInitially {
                 view.zoomOut()
             }
-            view.frame = CGRect(x: scrollView.frame.size.width * CGFloat(index), y: 0, width: scrollView.frame.size.width, height: scrollView.frame.size.height)
+            let rect = CGRect(
+                x: (imageWidth + type.carouselSpacing) * CGFloat(index) + type.carouselContentInset,
+                y: 0,
+                width: imageWidth,
+                height: scrollView.frame.size.height
+            )
+            view.frame = rect
         }
 
         setScrollViewPage(scrollViewPage, animated: false)
@@ -324,6 +441,7 @@ open class ImageSlideshow: UIView {
         var i = 0
         for image in scrollViewImages {
             let item = ImageSlideshowItem(image: image, zoomEnabled: zoomEnabled, activityIndicator: activityIndicator?.create(), maximumScale: maximumScale)
+            item.layer.cornerRadius = type.cornerRadius
             item.imageView.contentMode = contentScaleMode
             slideshowItems.append(item)
             scrollView.addSubview(item)
@@ -332,7 +450,15 @@ open class ImageSlideshow: UIView {
 
         if circular && (scrollViewImages.count > 1) {
             scrollViewPage = 1
-            scrollView.scrollRectToVisible(CGRect(x: scrollView.frame.size.width, y: 0, width: scrollView.frame.size.width, height: scrollView.frame.size.height), animated: false)
+            scrollView.scrollRectToVisible(
+                CGRect(
+                    x: scrollView.frame.size.width,
+                    y: 0,
+                    width: scrollView.frame.size.width,
+                    height: scrollView.frame.size.height
+                ),
+                animated: false
+            )
         } else {
             scrollViewPage = 0
         }
@@ -415,7 +541,13 @@ open class ImageSlideshow: UIView {
      */
     open func setScrollViewPage(_ newScrollViewPage: Int, animated: Bool) {
         if scrollViewPage < scrollViewImages.count {
-            scrollView.scrollRectToVisible(CGRect(x: scrollView.frame.size.width * CGFloat(newScrollViewPage), y: 0, width: scrollView.frame.size.width, height: scrollView.frame.size.height), animated: animated)
+            let rect = CGRect(
+                x: (imageWidth + type.carouselSpacing) * CGFloat(newScrollViewPage),
+                y: 0,
+                width: scrollView.frame.size.width,
+                height: scrollView.frame.size.height
+            )
+            scrollView.scrollRectToVisible(rect, animated: animated)
             setCurrentPageForScrollViewPage(newScrollViewPage)
             if animated {
                 isAnimating = true
@@ -425,7 +557,13 @@ open class ImageSlideshow: UIView {
 
     fileprivate func setTimerIfNeeded() {
         if slideshowInterval > 0 && scrollViewImages.count > 1 && slideshowTimer == nil {
-            slideshowTimer = Timer.scheduledTimer(timeInterval: slideshowInterval, target: self, selector: #selector(ImageSlideshow.slideshowTick(_:)), userInfo: nil, repeats: true)
+            slideshowTimer = Timer.scheduledTimer(
+                timeInterval: slideshowInterval,
+                target: self,
+                selector: #selector(ImageSlideshow.slideshowTick(_:)),
+                userInfo: nil,
+                repeats: true
+            )
         }
     }
 

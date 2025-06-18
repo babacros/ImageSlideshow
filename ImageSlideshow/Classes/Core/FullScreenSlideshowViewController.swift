@@ -11,7 +11,7 @@ import UIKit
 open class FullScreenSlideshowViewController: UIViewController {
 
     open var slideshow: ImageSlideshow = {
-        let slideshow = ImageSlideshow()
+        let slideshow = ImageSlideshow(frame: .zero, type: .fullWidth)
         slideshow.zoomEnabled = true
         slideshow.contentScaleMode = UIViewContentMode.scaleAspectFit
         slideshow.pageIndicatorPosition = PageIndicatorPosition(horizontal: .center, vertical: .bottom)
@@ -22,7 +22,7 @@ open class FullScreenSlideshowViewController: UIViewController {
         return slideshow
     }()
 
-    /// Close button 
+    /// Close button
     open var closeButton = UIButton()
 
     /// Close button frame
@@ -34,7 +34,7 @@ open class FullScreenSlideshowViewController: UIViewController {
     /// Index of initial image
     open var initialPage: Int = 0
 
-    /// Input sources to 
+    /// Input sources to
     open var inputs: [InputSource]?
 
     /// Background color
